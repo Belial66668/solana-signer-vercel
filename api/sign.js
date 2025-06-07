@@ -1,8 +1,8 @@
 // ========================================
-// VERCEL FINAL - VRAIES TRANSACTIONS SOLANA
+// VERCEL FINAL CORRIGÉ - GESTION BLOCKHASH + VERSIONED
 // ========================================
 export default async function handler(req, res) {
-  console.log('🔥 === VERCEL FINAL - VRAIES TRANSACTIONS ===');
+  console.log('🔥 === VERCEL FINAL CORRIGÉ ===');
   
   try {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -15,10 +15,9 @@ export default async function handler(req, res) {
 
     const { transaction, privateKey, metadata = {} } = req.body;
     
-    console.log('📋 === VRAIE TRANSACTION FINALE ===');
+    console.log('📋 === TRANSACTION CORRIGÉE ===');
     console.log('Transaction length:', transaction ? transaction.length : 0);
     console.log('Bot:', metadata.bot || 'N8N-Bot');
-    console.log('Timestamp:', metadata.timestamp);
     
     if (!transaction || !privateKey) {
       return res.status(400).json({
@@ -30,7 +29,7 @@ export default async function handler(req, res) {
     // ========================================
     // IMPORTS ET CONNEXION
     // ========================================
-    const { Connection, VersionedTransaction, Transaction, Keypair } = await import('@solana/web3.js');
+    const { Connection, VersionedTransaction, VersionedMessage, Transaction, Keypair } = await import('@solana/web3.js');
     const bs58 = await import('bs58');
     
     console.log('🌐 Connexion Solana...');
@@ -61,21 +60,33 @@ export default async function handler(req, res) {
     }
     
     // ========================================
-    // DÉCODAGE ET SIGNATURE TRANSACTION
+    // DÉCODAGE INTELLIGENT CORRIGÉ
     // ========================================
-    console.log('🔓 Décodage transaction Jupiter...');
+    console.log('🔓 Décodage transaction Jupiter corrigé...');
     
     const transactionBuffer = Buffer.from(transaction, 'base64');
     let tx;
     let signature;
     
     try {
-      // Essayer VersionedTransaction d'abord (Jupiter moderne)
-      tx = VersionedTransaction.deserialize(transactionBuffer);
-      console.log('✅ VersionedTransaction décodée');
+      // NOUVEAU : Utiliser VersionedMessage d'abord
+      console.log('🧪 Test VersionedMessage.deserialize...');
+      const versionedMessage = VersionedMessage.deserialize(transactionBuffer);
       
-      // Signature VersionedTransaction
-      console.log('✍️ Signature VersionedTransaction...');
+      // Créer VersionedTransaction depuis le message
+      tx = new VersionedTransaction(versionedMessage);
+      console.log('✅ VersionedMessage → VersionedTransaction créée');
+      
+      // IMPORTANT : Obtenir un NOUVEAU blockhash récent
+      console.log('⏰ Récupération nouveau blockhash...');
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      
+      // Remplacer le blockhash expiré par un nouveau
+      tx.message.recentBlockhash = blockhash;
+      console.log('✅ Nouveau blockhash appliqué:', blockhash.substring(0, 20) + '...');
+      
+      // Signature avec nouveau blockhash
+      console.log('✍️ Signature VersionedTransaction avec nouveau blockhash...');
       tx.sign([keypair]);
       
       console.log('🚀 Envoi VersionedTransaction...');
@@ -86,17 +97,19 @@ export default async function handler(req, res) {
       });
       
     } catch (versionedError) {
-      console.log('⚠️ VersionedTransaction failed:', versionedError.message);
+      console.log('⚠️ VersionedMessage failed:', versionedError.message);
       
       try {
-        // Fallback vers Legacy Transaction
+        // Fallback vers Legacy avec nouveau blockhash
+        console.log('🔄 Fallback Legacy Transaction...');
         tx = Transaction.from(transactionBuffer);
         console.log('✅ Legacy Transaction décodée');
         
-        // Préparation Legacy
+        // NOUVEAU blockhash pour Legacy aussi
         const { blockhash } = await connection.getLatestBlockhash('confirmed');
         tx.recentBlockhash = blockhash;
         tx.feePayer = keypair.publicKey;
+        console.log('✅ Nouveau blockhash Legacy appliqué');
         
         // Signature Legacy
         console.log('✍️ Signature Legacy Transaction...');
@@ -110,7 +123,7 @@ export default async function handler(req, res) {
         });
         
       } catch (legacyError) {
-        throw new Error(`Transaction format error - Versioned: ${versionedError.message}, Legacy: ${legacyError.message}`);
+        throw new Error(`Both formats failed - VersionedMessage: ${versionedError.message}, Legacy: ${legacyError.message}`);
       }
     }
     
@@ -166,29 +179,29 @@ export default async function handler(req, res) {
       wallet: walletAddress,
       transactionType: tx instanceof VersionedTransaction ? 'VersionedTransaction' : 'LegacyTransaction',
       confirmationStatus: confirmationStatus,
-      processingTime: Date.now() - new Date(metadata.timestamp || Date.now()).getTime(),
-      service: 'VERCEL_FINAL_PRODUCTION',
+      service: 'VERCEL_FINAL_CORRIGÉ',
       network: 'solana-mainnet',
+      blockhashUpdated: true,
       timestamp: new Date().toISOString(),
-      message: '🔥 VRAIE TRANSACTION BLOCKCHAIN AUTOMATIQUE RÉUSSIE !',
-      automation: '100% - Détection N8N + Signature Vercel + Blockchain Solana',
+      message: '🔥 VRAIE TRANSACTION BLOCKCHAIN AVEC BLOCKHASH CORRIGÉ !',
+      automation: '100% - N8N + Vercel + Nouveau Blockhash + Solana',
       metadata: metadata
     });
     
   } catch (error) {
-    console.error('❌ ERREUR FINALE:', error.message);
-    console.error('🔍 Stack:', error.stack);
+    console.error('❌ ERREUR FINALE CORRIGÉE:', error.message);
     
     res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(500).json({
       success: false,
       error: error.message,
-      service: 'VERCEL_FINAL_PRODUCTION',
+      service: 'VERCEL_FINAL_CORRIGÉ',
       timestamp: new Date().toISOString(),
-      errorDetails: {
-        type: error.constructor.name,
-        message: error.message
-      }
+      fixes: [
+        "VersionedMessage.deserialize()",
+        "Nouveau blockhash récent",
+        "Gestion des deux formats"
+      ]
     });
   }
 }
