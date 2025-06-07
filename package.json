@@ -1,0 +1,17 @@
+{
+  "name": "solana-signer-vercel",
+  "version": "1.0.0",
+  "description": "Service de signature Solana sur Vercel",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'No build step'"
+  },
+  "dependencies": {
+    "@solana/web3.js": "1.87.6",
+    "bs58": "5.0.0"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
