@@ -1,10 +1,9 @@
 // ========================================
-// SOLANA SIGNER VERCEL - SERVICE GRATUIT
+// SOLANA SIGNER VERCEL - SUPPORT VERSIONED TRANSACTIONS
 // ========================================
-import { Connection, Transaction, Keypair } from '@solana/web3.js';
+import { Connection, Transaction, Keypair, VersionedTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 
-// Configuration CORS pour Heroku
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -12,7 +11,6 @@ const corsHeaders = {
 };
 
 export default async function handler(req, res) {
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return res.status(200).json({});
   }
@@ -22,7 +20,6 @@ export default async function handler(req, res) {
   try {
     const { transaction, privateKey, metadata = {} } = req.body;
     
-    // Validation
     if (!transaction || !privateKey) {
       console.log('❌ Données manquantes');
       return res.status(400).json({
@@ -40,22 +37,36 @@ export default async function handler(req, res) {
     console.log('🌐 Connexion Solana...');
     const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
     
-    // Test connexion
     const slot = await connection.getSlot();
     console.log('✅ Connecté - Slot:', slot);
     
     // ========================================
-    // DÉCODAGE ET SIGNATURE
+    // DÉCODAGE INTELLIGENT (LEGACY + VERSIONED)
     // ========================================
-    console.log('🔓 Décodage transaction...');
+    console.log('🔓 Décodage transaction intelligent...');
     
     const transactionBuffer = Buffer.from(transaction, 'base64');
-    const tx = Transaction.from(transactionBuffer);
+    let tx;
     
-    console.log('✅ Transaction décodée');
-    console.log('📊 Instructions:', tx.instructions.length);
+    try {
+      // Essayer d'abord le format Versioned (Jupiter récent)
+      tx = VersionedTransaction.deserialize(transactionBuffer);
+      console.log('✅ Transaction Versioned décodée');
+      console.log('📊 Type: VersionedTransaction');
+    } catch (versionError) {
+      try {
+        // Fallback vers le format Legacy
+        tx = Transaction.from(transactionBuffer);
+        console.log('✅ Transaction Legacy décodée');
+        console.log('📊 Type: Legacy Transaction');
+      } catch (legacyError) {
+        throw new Error(`Erreur décodage transaction: Versioned=${versionError.message}, Legacy=${legacyError.message}`);
+      }
+    }
     
-    // Création keypair
+    // ========================================
+    // CRÉATION KEYPAIR
+    // ========================================
     console.log('🔑 Création keypair...');
     const privateKeyBytes = bs58.decode(privateKey);
     const keypair = Keypair.fromSecretKey(privateKeyBytes);
@@ -63,7 +74,9 @@ export default async function handler(req, res) {
     
     console.log('🎯 Wallet:', walletAddress);
     
-    // Vérification balance
+    // ========================================
+    // VÉRIFICATION BALANCE
+    // ========================================
     const balance = await connection.getBalance(keypair.publicKey);
     const solBalance = balance / 1e9;
     console.log('💰 Balance:', solBalance.toFixed(6), 'SOL');
@@ -73,33 +86,21 @@ export default async function handler(req, res) {
     }
     
     // ========================================
-    // PRÉPARATION ET SIGNATURE
+    // SIGNATURE SELON LE TYPE
     // ========================================
-    console.log('⚙️ Préparation transaction...');
-    
-    const { blockhash } = await connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = blockhash;
-    tx.feePayer = keypair.publicKey;
-    
     console.log('✍️ Signature transaction...');
-    tx.sign(keypair);
     
-    console.log('✅ Transaction signée');
-    
-    // ========================================
-    // SIMULATION
-    // ========================================
-    console.log('🧪 Simulation...');
-    
-    try {
-      const simulation = await connection.simulateTransaction(tx);
-      if (simulation.value.err) {
-        console.log('⚠️ Simulation warning:', simulation.value.err);
-      } else {
-        console.log('✅ Simulation OK');
-      }
-    } catch (simError) {
-      console.log('⚠️ Simulation failed:', simError.message);
+    if (tx instanceof VersionedTransaction) {
+      // Signature pour transaction versioned
+      tx.sign([keypair]);
+      console.log('✅ VersionedTransaction signée');
+    } else {
+      // Signature pour transaction legacy
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
+      tx.feePayer = keypair.publicKey;
+      tx.sign(keypair);
+      console.log('✅ Legacy Transaction signée');
     }
     
     // ========================================
@@ -107,11 +108,20 @@ export default async function handler(req, res) {
     // ========================================
     console.log('🚀 Envoi sur blockchain...');
     
-    const signature = await connection.sendRawTransaction(tx.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-      maxRetries: 3
-    });
+    let signature;
+    if (tx instanceof VersionedTransaction) {
+      signature = await connection.sendTransaction(tx, {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+        maxRetries: 3
+      });
+    } else {
+      signature = await connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+        maxRetries: 3
+      });
+    }
     
     console.log('📋 SIGNATURE:', signature);
     
@@ -145,7 +155,7 @@ export default async function handler(req, res) {
     // ========================================
     // RÉPONSE SUCCESS
     // ========================================
-    console.log('🎉 TRANSACTION RÉUSSIE !');
+    console.log('🎉 TRANSACTION VERSIONED RÉUSSIE !');
     
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.status(200).json({
@@ -157,10 +167,11 @@ export default async function handler(req, res) {
       balanceBefore: parseFloat(solBalance.toFixed(6)),
       balanceAfter: parseFloat(finalSolBalance.toFixed(6)),
       wallet: walletAddress,
+      transactionType: tx instanceof VersionedTransaction ? 'VersionedTransaction' : 'LegacyTransaction',
       confirmationStatus: 'confirmed',
-      service: 'VERCEL_SOLANA_SIGNER',
+      service: 'VERCEL_SOLANA_SIGNER_V2',
       timestamp: new Date().toISOString(),
-      message: '🔥 VRAIE TRANSACTION VERCEL RÉUSSIE !',
+      message: '🔥 VRAIE TRANSACTION VERSIONED RÉUSSIE !',
       metadata: metadata
     });
     
@@ -171,7 +182,7 @@ export default async function handler(req, res) {
     res.status(500).json({
       success: false,
       error: error.message,
-      service: 'VERCEL_SOLANA_SIGNER',
+      service: 'VERCEL_SOLANA_SIGNER_V2',
       timestamp: new Date().toISOString()
     });
   }
