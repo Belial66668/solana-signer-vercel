@@ -1,13 +1,11 @@
 // ========================================
-// VERCEL - DÉSÉRIALISATION CORRECTE
+// VERCEL - DIAGNOSTIC SIGNATAIRES SIMPLE
 // ========================================
 export default async function handler(req, res) {
-  console.log('🔥 === VERCEL DÉSÉRIALISATION CORRECTE ===');
+  console.log('🔥 === DIAGNOSTIC SIGNATAIRES ===');
   
   try {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     
     if (req.method === 'OPTIONS') {
       return res.status(200).json({});
@@ -15,169 +13,60 @@ export default async function handler(req, res) {
 
     const { transaction, privateKey, metadata = {} } = req.body;
     
-    console.log('📋 === TRANSACTION AVEC BONNE DÉSÉRIALISATION ===');
-    console.log('Transaction length:', transaction ? transaction.length : 0);
-    console.log('Bot:', metadata.bot || 'N8N-Bot');
-    
-    if (!transaction || !privateKey) {
-      return res.status(400).json({
-        success: false,
-        error: 'Transaction et privateKey requis'
-      });
-    }
-    
-    // ========================================
-    // IMPORTS
-    // ========================================
-    const { Connection, VersionedTransaction, VersionedMessage, Keypair } = await import('@solana/web3.js');
+    // Imports
+    const { VersionedTransaction, VersionedMessage, Keypair } = await import('@solana/web3.js');
     const bs58 = await import('bs58');
     
-    console.log('🌐 Connexion Solana...');
-    const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
-    
-    const slot = await connection.getSlot();
-    console.log('✅ Connecté - Slot:', slot);
-    
-    // ========================================
-    // KEYPAIR
-    // ========================================
-    console.log('🔑 Création keypair...');
+    // Keypair
     const privateKeyBytes = bs58.default.decode(privateKey);
     const keypair = Keypair.fromSecretKey(privateKeyBytes);
-    const walletAddress = keypair.publicKey.toString();
+    const myWallet = keypair.publicKey.toString();
     
-    console.log('🎯 Wallet:', walletAddress);
+    console.log('🎯 Mon wallet:', myWallet);
     
-    // ========================================
-    // BALANCE CHECK
-    // ========================================
-    const balance = await connection.getBalance(keypair.publicKey);
-    const solBalance = balance / 1e9;
-    console.log('💰 Balance:', solBalance.toFixed(6), 'SOL');
+    // Décoder transaction
+    const transactionBuffer = Buffer.from(transaction, 'base64');
+    const messageV0 = VersionedMessage.deserialize(transactionBuffer);
+    const tx = new VersionedTransaction(messageV0);
     
-    if (balance < 5000000) {
-      throw new Error(`Balance insuffisante: ${solBalance.toFixed(6)} SOL`);
-    }
+    // Analyser signataires
+    console.log('\n🔐 === SIGNATAIRES REQUIS ===');
+    const staticKeys = tx.message.staticAccountKeys;
+    const signers = [];
     
-    // ========================================
-    // DÉSÉRIALISATION CORRECTE AVEC VersionedMessage
-    // ========================================
-    console.log('🔓 Désérialisation correcte avec VersionedMessage...');
-    
-    let signature;
-    try {
-      const transactionBuffer = Buffer.from(transaction, 'base64');
-      
-      // IMPORTANT : Utiliser VersionedMessage.deserialize() d'abord !
-      console.log('📋 Utilisation de VersionedMessage.deserialize()...');
-      const messageV0 = VersionedMessage.deserialize(transactionBuffer);
-      console.log('✅ VersionedMessage désérialisé avec succès');
-      
-      // Créer VersionedTransaction à partir du message
-      console.log('🔨 Création VersionedTransaction depuis le message...');
-      const tx = new VersionedTransaction(messageV0);
-      console.log('✅ VersionedTransaction créée');
-      
-      // Obtenir un nouveau blockhash récent
-      console.log('⏰ Obtention blockhash récent...');
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-      console.log('📋 Blockhash:', blockhash.substring(0, 20) + '...');
-      
-      // Mettre à jour le blockhash dans le message
-      tx.message.recentBlockhash = blockhash;
-      
-      // Signer la transaction
-      console.log('✍️ Signature de la transaction...');
-      tx.sign([keypair]);
-      console.log('✅ Transaction signée');
-      
-      // ========================================
-      // ENVOI TRANSACTION
-      // ========================================
-      console.log('🚀 Envoi transaction sur blockchain...');
-      
-      signature = await connection.sendTransaction(tx, {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed',
-        maxRetries: 3
-      });
-      
-      console.log('📋 SIGNATURE BLOCKCHAIN:', signature);
-      
-    } catch (versionedError) {
-      console.log('❌ Erreur VersionedMessage:', versionedError.message);
-      console.log('🔍 Stack:', versionedError.stack);
-      throw new Error(`Erreur désérialisation VersionedMessage: ${versionedError.message}`);
-    }
-    
-    // ========================================
-    // CONFIRMATION
-    // ========================================
-    console.log('⏳ Attente confirmation...');
-    
-    let confirmationStatus = 'pending';
-    try {
-      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
-      
-      if (confirmation.value.err) {
-        console.log('❌ Transaction failed:', confirmation.value.err);
-        confirmationStatus = 'failed';
-      } else {
-        console.log('✅ TRANSACTION CONFIRMÉE !');
-        confirmationStatus = 'confirmed';
+    for (let i = 0; i < staticKeys.length; i++) {
+      if (tx.message.isAccountSigner(i)) {
+        const address = staticKeys[i].toString();
+        const isMyWallet = address === myWallet;
+        console.log(`Signataire ${i}: ${address} ${isMyWallet ? '✅ MON WALLET' : '❌ AUTRE'}`);
+        signers.push({ address, isMyWallet });
       }
-    } catch (confirmError) {
-      console.log('⚠️ Confirmation timeout:', confirmError.message);
-      confirmationStatus = 'timeout';
     }
     
-    // ========================================
-    // BALANCE FINALE
-    // ========================================
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    const otherSigners = signers.filter(s => !s.isMyWallet);
     
-    const finalBalance = await connection.getBalance(keypair.publicKey);
-    const finalSolBalance = finalBalance / 1e9;
-    const balanceChange = finalSolBalance - solBalance;
+    console.log(`\nTotal signataires: ${signers.length}`);
+    console.log(`Mon wallet: ${signers.filter(s => s.isMyWallet).length}`);
+    console.log(`Autres: ${otherSigners.length}`);
     
-    console.log('💰 Balance finale:', finalSolBalance.toFixed(6), 'SOL');
-    console.log('📊 Changement:', balanceChange.toFixed(6), 'SOL');
-    
-    // ========================================
-    // RÉPONSE SUCCESS
-    // ========================================
-    console.log('🎉🎉🎉 VRAIE TRANSACTION RÉUSSIE ! 🎉🎉🎉');
-    console.log('🔗 Explorer:', `https://solscan.io/tx/${signature}`);
-    console.log('🤖 BOT 100% AUTOMATISÉ OPÉRATIONNEL !');
+    if (otherSigners.length > 0) {
+      console.log('\n❌ PROBLÈME: Transaction nécessite ces signatures:');
+      otherSigners.forEach(s => console.log(`  - ${s.address}`));
+    }
     
     return res.status(200).json({
-      success: true,
-      signature: signature,
-      explorerUrl: `https://solscan.io/tx/${signature}`,
-      solanafmUrl: `https://solana.fm/tx/${signature}`,
-      balanceChange: parseFloat(balanceChange.toFixed(6)),
-      balanceBefore: parseFloat(solBalance.toFixed(6)),
-      balanceAfter: parseFloat(finalSolBalance.toFixed(6)),
-      wallet: walletAddress,
-      transactionType: 'VersionedTransaction',
-      confirmationStatus: confirmationStatus,
-      service: 'VERCEL_CORRECT_DESERIALIZE',
-      network: 'solana-mainnet',
-      timestamp: new Date().toISOString(),
-      message: '🔥 VRAIE TRANSACTION AVEC BONNE DÉSÉRIALISATION !',
-      metadata: metadata
+      diagnostic: 'SIGNERS_ANALYSIS',
+      myWallet: myWallet,
+      totalSigners: signers.length,
+      myWalletSigners: signers.filter(s => s.isMyWallet).length,
+      otherSignersRequired: otherSigners.length,
+      otherSigners: otherSigners.map(s => s.address),
+      problem: otherSigners.length > 0 ? 'Transaction requires other signatures' : 'OK',
+      solution: 'Need to use different Jupiter parameters or endpoint'
     });
     
   } catch (error) {
     console.error('❌ ERREUR:', error.message);
-    console.error('🔍 Stack:', error.stack);
-    
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    return res.status(500).json({
-      success: false,
-      error: error.message,
-      service: 'VERCEL_CORRECT_DESERIALIZE',
-      timestamp: new Date().toISOString()
-    });
+    return res.status(500).json({ error: error.message });
   }
 }
