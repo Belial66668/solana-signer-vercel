@@ -1,8 +1,8 @@
 // ========================================
-// VERCEL FINAL CORRIGÉ - GESTION BLOCKHASH + VERSIONED
+// VERCEL - DÉSÉRIALISATION CORRECTE
 // ========================================
 export default async function handler(req, res) {
-  console.log('🔥 === VERCEL FINAL CORRIGÉ ===');
+  console.log('🔥 === VERCEL DÉSÉRIALISATION CORRECTE ===');
   
   try {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -15,7 +15,7 @@ export default async function handler(req, res) {
 
     const { transaction, privateKey, metadata = {} } = req.body;
     
-    console.log('📋 === TRANSACTION CORRIGÉE ===');
+    console.log('📋 === TRANSACTION AVEC BONNE DÉSÉRIALISATION ===');
     console.log('Transaction length:', transaction ? transaction.length : 0);
     console.log('Bot:', metadata.bot || 'N8N-Bot');
     
@@ -27,9 +27,9 @@ export default async function handler(req, res) {
     }
     
     // ========================================
-    // IMPORTS ET CONNEXION
+    // IMPORTS
     // ========================================
-    const { Connection, VersionedTransaction, VersionedMessage, Transaction, Keypair } = await import('@solana/web3.js');
+    const { Connection, VersionedTransaction, VersionedMessage, Keypair } = await import('@solana/web3.js');
     const bs58 = await import('bs58');
     
     console.log('🌐 Connexion Solana...');
@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     console.log('✅ Connecté - Slot:', slot);
     
     // ========================================
-    // CRÉATION KEYPAIR
+    // KEYPAIR
     // ========================================
     console.log('🔑 Création keypair...');
     const privateKeyBytes = bs58.default.decode(privateKey);
@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     console.log('🎯 Wallet:', walletAddress);
     
     // ========================================
-    // VÉRIFICATION BALANCE
+    // BALANCE CHECK
     // ========================================
     const balance = await connection.getBalance(keypair.publicKey);
     const solBalance = balance / 1e9;
@@ -60,74 +60,55 @@ export default async function handler(req, res) {
     }
     
     // ========================================
-    // DÉCODAGE INTELLIGENT CORRIGÉ
+    // DÉSÉRIALISATION CORRECTE AVEC VersionedMessage
     // ========================================
-    console.log('🔓 Décodage transaction Jupiter corrigé...');
+    console.log('🔓 Désérialisation correcte avec VersionedMessage...');
     
-    const transactionBuffer = Buffer.from(transaction, 'base64');
-    let tx;
     let signature;
-    
     try {
-      // NOUVEAU : Utiliser VersionedMessage d'abord
-      console.log('🧪 Test VersionedMessage.deserialize...');
-      const versionedMessage = VersionedMessage.deserialize(transactionBuffer);
+      const transactionBuffer = Buffer.from(transaction, 'base64');
       
-      // Créer VersionedTransaction depuis le message
-      tx = new VersionedTransaction(versionedMessage);
-      console.log('✅ VersionedMessage → VersionedTransaction créée');
+      // IMPORTANT : Utiliser VersionedMessage.deserialize() d'abord !
+      console.log('📋 Utilisation de VersionedMessage.deserialize()...');
+      const messageV0 = VersionedMessage.deserialize(transactionBuffer);
+      console.log('✅ VersionedMessage désérialisé avec succès');
       
-      // IMPORTANT : Obtenir un NOUVEAU blockhash récent
-      console.log('⏰ Récupération nouveau blockhash...');
+      // Créer VersionedTransaction à partir du message
+      console.log('🔨 Création VersionedTransaction depuis le message...');
+      const tx = new VersionedTransaction(messageV0);
+      console.log('✅ VersionedTransaction créée');
+      
+      // Obtenir un nouveau blockhash récent
+      console.log('⏰ Obtention blockhash récent...');
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      console.log('📋 Blockhash:', blockhash.substring(0, 20) + '...');
       
-      // Remplacer le blockhash expiré par un nouveau
+      // Mettre à jour le blockhash dans le message
       tx.message.recentBlockhash = blockhash;
-      console.log('✅ Nouveau blockhash appliqué:', blockhash.substring(0, 20) + '...');
       
-      // Signature avec nouveau blockhash
-      console.log('✍️ Signature VersionedTransaction avec nouveau blockhash...');
+      // Signer la transaction
+      console.log('✍️ Signature de la transaction...');
       tx.sign([keypair]);
+      console.log('✅ Transaction signée');
       
-      console.log('🚀 Envoi VersionedTransaction...');
+      // ========================================
+      // ENVOI TRANSACTION
+      // ========================================
+      console.log('🚀 Envoi transaction sur blockchain...');
+      
       signature = await connection.sendTransaction(tx, {
         skipPreflight: false,
         preflightCommitment: 'confirmed',
         maxRetries: 3
       });
       
-    } catch (versionedError) {
-      console.log('⚠️ VersionedMessage failed:', versionedError.message);
+      console.log('📋 SIGNATURE BLOCKCHAIN:', signature);
       
-      try {
-        // Fallback vers Legacy avec nouveau blockhash
-        console.log('🔄 Fallback Legacy Transaction...');
-        tx = Transaction.from(transactionBuffer);
-        console.log('✅ Legacy Transaction décodée');
-        
-        // NOUVEAU blockhash pour Legacy aussi
-        const { blockhash } = await connection.getLatestBlockhash('confirmed');
-        tx.recentBlockhash = blockhash;
-        tx.feePayer = keypair.publicKey;
-        console.log('✅ Nouveau blockhash Legacy appliqué');
-        
-        // Signature Legacy
-        console.log('✍️ Signature Legacy Transaction...');
-        tx.sign(keypair);
-        
-        console.log('🚀 Envoi Legacy Transaction...');
-        signature = await connection.sendRawTransaction(tx.serialize(), {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-          maxRetries: 3
-        });
-        
-      } catch (legacyError) {
-        throw new Error(`Both formats failed - VersionedMessage: ${versionedError.message}, Legacy: ${legacyError.message}`);
-      }
+    } catch (versionedError) {
+      console.log('❌ Erreur VersionedMessage:', versionedError.message);
+      console.log('🔍 Stack:', versionedError.stack);
+      throw new Error(`Erreur désérialisation VersionedMessage: ${versionedError.message}`);
     }
-    
-    console.log('📋 SIGNATURE BLOCKCHAIN:', signature);
     
     // ========================================
     // CONFIRMATION
@@ -137,6 +118,7 @@ export default async function handler(req, res) {
     let confirmationStatus = 'pending';
     try {
       const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      
       if (confirmation.value.err) {
         console.log('❌ Transaction failed:', confirmation.value.err);
         confirmationStatus = 'failed';
@@ -162,7 +144,7 @@ export default async function handler(req, res) {
     console.log('📊 Changement:', balanceChange.toFixed(6), 'SOL');
     
     // ========================================
-    // RÉPONSE FINALE SUCCESS
+    // RÉPONSE SUCCESS
     // ========================================
     console.log('🎉🎉🎉 VRAIE TRANSACTION RÉUSSIE ! 🎉🎉🎉');
     console.log('🔗 Explorer:', `https://solscan.io/tx/${signature}`);
@@ -177,31 +159,25 @@ export default async function handler(req, res) {
       balanceBefore: parseFloat(solBalance.toFixed(6)),
       balanceAfter: parseFloat(finalSolBalance.toFixed(6)),
       wallet: walletAddress,
-      transactionType: tx instanceof VersionedTransaction ? 'VersionedTransaction' : 'LegacyTransaction',
+      transactionType: 'VersionedTransaction',
       confirmationStatus: confirmationStatus,
-      service: 'VERCEL_FINAL_CORRIGÉ',
+      service: 'VERCEL_CORRECT_DESERIALIZE',
       network: 'solana-mainnet',
-      blockhashUpdated: true,
       timestamp: new Date().toISOString(),
-      message: '🔥 VRAIE TRANSACTION BLOCKCHAIN AVEC BLOCKHASH CORRIGÉ !',
-      automation: '100% - N8N + Vercel + Nouveau Blockhash + Solana',
+      message: '🔥 VRAIE TRANSACTION AVEC BONNE DÉSÉRIALISATION !',
       metadata: metadata
     });
     
   } catch (error) {
-    console.error('❌ ERREUR FINALE CORRIGÉE:', error.message);
+    console.error('❌ ERREUR:', error.message);
+    console.error('🔍 Stack:', error.stack);
     
     res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(500).json({
       success: false,
       error: error.message,
-      service: 'VERCEL_FINAL_CORRIGÉ',
-      timestamp: new Date().toISOString(),
-      fixes: [
-        "VersionedMessage.deserialize()",
-        "Nouveau blockhash récent",
-        "Gestion des deux formats"
-      ]
+      service: 'VERCEL_CORRECT_DESERIALIZE',
+      timestamp: new Date().toISOString()
     });
   }
 }
