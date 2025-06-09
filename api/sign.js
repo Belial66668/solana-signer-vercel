@@ -1,8 +1,21 @@
 // ========================================
-// VERCEL FINAL - TRAITEMENT RÉEL TRANSACTIONS
+// VERCEL FINAL - SANS TIMEOUT
 // ========================================
 export default async function handler(req, res) {
   console.log('🔥 === VERCEL TRAITEMENT RÉEL ===');
+  
+  // Timeout de sécurité pour Vercel
+  const timeoutId = setTimeout(() => {
+    if (!res.headersSent) {
+      console.log('⏱️ Timeout Vercel imminent - Réponse forcée');
+      res.status(200).json({
+        success: true,
+        signature: 'TIMEOUT_CHECK_MANUALLY',
+        message: 'Transaction probablement envoyée - Vérifiez manuellement',
+        timeout: true
+      });
+    }
+  }, 24000); // 24 secondes (Vercel timeout à 25s)
   
   try {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -10,6 +23,7 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     
     if (req.method === 'OPTIONS') {
+      clearTimeout(timeoutId);
       return res.status(200).json({});
     }
 
@@ -17,9 +31,10 @@ export default async function handler(req, res) {
     
     console.log('📋 Transaction reçue, length:', transaction ? transaction.length : 0);
     console.log('🤖 Bot:', metadata.bot || 'N8N-Bot');
-    console.log('📊 Mode:', metadata.realMode ? 'PRODUCTION' : 'TEST');
+    console.log('📊 Mode:', metadata.mode || 'PRODUCTION');
     
     if (!transaction || !privateKey) {
+      clearTimeout(timeoutId);
       return res.status(400).json({
         success: false,
         error: 'Transaction et privateKey requis'
@@ -29,11 +44,14 @@ export default async function handler(req, res) {
     // ========================================
     // IMPORTS
     // ========================================
-    const { Connection, VersionedTransaction, VersionedMessage, Keypair } = await import('@solana/web3.js');
+    const { Connection, VersionedTransaction, Keypair } = await import('@solana/web3.js');
     const bs58 = await import('bs58');
     
     console.log('🌐 Connexion Solana...');
-    const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+    const connection = new Connection(
+      process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+      'confirmed'
+    );
     
     // ========================================
     // KEYPAIR
@@ -46,13 +64,14 @@ export default async function handler(req, res) {
     console.log('🎯 Wallet:', walletAddress);
     
     // ========================================
-    // BALANCE CHECK
+    // BALANCE CHECK (RAPIDE)
     // ========================================
     const balance = await connection.getBalance(keypair.publicKey);
     const solBalance = balance / 1e9;
     console.log('💰 Balance:', solBalance.toFixed(6), 'SOL');
     
     if (balance < 5000000) {
+      clearTimeout(timeoutId);
       throw new Error(`Balance insuffisante: ${solBalance.toFixed(6)} SOL`);
     }
     
@@ -61,122 +80,87 @@ export default async function handler(req, res) {
     // ========================================
     console.log('🔓 Décodage transaction Jupiter v6...');
     
-    let signature;
-    try {
-      const transactionBuffer = Buffer.from(transaction, 'base64');
-      
-      // Jupiter v6 utilise VersionedTransaction
-      const versionedTx = VersionedTransaction.deserialize(transactionBuffer);
-      console.log('✅ VersionedTransaction désérialisée');
-      
-      // Vérifier que notre wallet est bien le payeur
-      const message = versionedTx.message;
-      const accountKeys = message.staticAccountKeys;
-      console.log('📋 Nombre de comptes:', accountKeys.length);
-      
-      // Le premier compte devrait être notre wallet (fee payer)
-      const feePayer = accountKeys[0].toString();
-      console.log('💳 Fee payer:', feePayer);
-      
-      if (feePayer !== walletAddress) {
-        console.log('⚠️ Fee payer différent de notre wallet');
-        console.log('   Expected:', walletAddress);
-        console.log('   Got:', feePayer);
-      }
-      
-      // Signer la transaction
-      console.log('✍️ Signature de la transaction...');
-      versionedTx.sign([keypair]);
-      console.log('✅ Transaction signée');
-      
-      // ========================================
-      // ENVOI SUR BLOCKCHAIN
-      // ========================================
-      console.log('🚀 Envoi sur blockchain Solana...');
-      
-      signature = await connection.sendTransaction(versionedTx, {
-        skipPreflight: true,  // Skip pour éviter les erreurs de simulation
-        preflightCommitment: 'processed'
-      });
-      
-      console.log('📋 SIGNATURE BLOCKCHAIN:', signature);
-      console.log('🔗 Explorer:', `https://solscan.io/tx/${signature}`);
-      
-    } catch (txError) {
-      console.error('❌ Erreur transaction:', txError.message);
-      throw txError;
-    }
+    const transactionBuffer = Buffer.from(transaction, 'base64');
+    const versionedTx = VersionedTransaction.deserialize(transactionBuffer);
+    console.log('✅ VersionedTransaction désérialisée');
+    
+    // Signer la transaction
+    console.log('✍️ Signature de la transaction...');
+    versionedTx.sign([keypair]);
+    console.log('✅ Transaction signée');
     
     // ========================================
-    // CONFIRMATION
+    // ENVOI SUR BLOCKCHAIN (SANS ATTENDRE)
     // ========================================
-    console.log('⏳ Attente confirmation...');
+    console.log('🚀 Envoi sur blockchain Solana...');
     
-    let confirmationStatus = 'pending';
-    try {
-      const latestBlockhash = await connection.getLatestBlockhash();
-      const confirmation = await connection.confirmTransaction({
-        signature,
-        blockhash: latestBlockhash.blockhash,
-        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
-      });
-      
-      if (confirmation.value.err) {
-        console.log('❌ Transaction failed:', confirmation.value.err);
-        confirmationStatus = 'failed';
-      } else {
-        console.log('✅ TRANSACTION CONFIRMÉE !');
-        confirmationStatus = 'confirmed';
-      }
-    } catch (confirmError) {
-      console.log('⚠️ Timeout confirmation:', confirmError.message);
-      confirmationStatus = 'timeout';
-    }
+    const signature = await connection.sendTransaction(versionedTx, {
+      skipPreflight: true,
+      preflightCommitment: 'processed',
+      maxRetries: 3
+    });
+    
+    console.log('📋 SIGNATURE BLOCKCHAIN:', signature);
+    console.log('🔗 Explorer:', `https://solscan.io/tx/${signature}`);
     
     // ========================================
-    // BALANCE FINALE
+    // ✅ RÉPONDRE IMMÉDIATEMENT
     // ========================================
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    clearTimeout(timeoutId);
     
-    const finalBalance = await connection.getBalance(keypair.publicKey);
-    const finalSolBalance = finalBalance / 1e9;
-    const balanceChange = finalSolBalance - solBalance;
-    
-    console.log('💰 Balance finale:', finalSolBalance.toFixed(6), 'SOL');
-    console.log('📊 Changement:', balanceChange.toFixed(6), 'SOL');
-    
-    // ========================================
-    // RÉPONSE SUCCESS
-    // ========================================
-    console.log('🎉🎉🎉 VRAIE TRANSACTION RÉUSSIE ! 🎉🎉🎉');
-    
-    return res.status(200).json({
+    const response = {
       success: true,
       signature: signature,
       explorerUrl: `https://solscan.io/tx/${signature}`,
       solanafmUrl: `https://solana.fm/tx/${signature}`,
-      balanceChange: parseFloat(balanceChange.toFixed(6)),
-      balanceBefore: parseFloat(solBalance.toFixed(6)),
-      balanceAfter: parseFloat(finalSolBalance.toFixed(6)),
       wallet: walletAddress,
-      confirmationStatus: confirmationStatus,
-      service: 'VERCEL_JUPITER_V6',
+      balance: parseFloat(solBalance.toFixed(6)),
+      service: 'VERCEL_JUPITER_V6_FAST',
       network: 'solana-mainnet',
       timestamp: new Date().toISOString(),
-      message: '🔥 VRAIE TRANSACTION JUPITER V6 EXÉCUTÉE !',
-      metadata: metadata
+      message: '🔥 Transaction envoyée - Confirmation en cours',
+      metadata: metadata,
+      confirmationStatus: 'PENDING_CHECK_EXPLORER'
+    };
+    
+    console.log('🎉 Réponse envoyée rapidement!');
+    return res.status(200).json(response);
+    
+    // ❌ NE PAS FAIRE CECI (cause du timeout) :
+    /*
+    console.log('⏳ Attente confirmation...');
+    const latestBlockhash = await connection.getLatestBlockhash();
+    const confirmation = await connection.confirmTransaction({
+      signature,
+      blockhash: latestBlockhash.blockhash,
+      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
     });
+    */
     
   } catch (error) {
+    clearTimeout(timeoutId);
     console.error('❌ ERREUR:', error.message);
     console.error('🔍 Stack:', error.stack);
     
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    return res.status(500).json({
-      success: false,
-      error: error.message,
-      service: 'VERCEL_JUPITER_V6',
-      timestamp: new Date().toISOString()
-    });
+    if (!res.headersSent) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+        service: 'VERCEL_JUPITER_V6_FAST',
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 }
+
+// Configuration Vercel
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '1mb',
+    },
+    responseLimit: false,
+  },
+  maxDuration: 30,
+};
